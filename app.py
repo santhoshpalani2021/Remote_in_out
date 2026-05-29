@@ -156,7 +156,6 @@ def index():
 
 
 @app.route('/remote_collection', methods=['GET', 'POST'])
-#@app.route('/faculty_scan', methods=['GET', 'POST'])
 def remote_collection():
     df = load_remote_log()
     faculty_df = load_faculty_data()
@@ -177,27 +176,16 @@ def remote_collection():
         # Strip spaces from column names in room_data
         room_data.columns = room_data.columns.str.strip()  # Ensure no extra spaces
 
-        # Print room_data for debugging to ensure the correct format
-        print("Room Data:")
-        print(room_data)
-
         # Determine the current slot
         slot_message = determine_current_slot(day_order)
         print("Determined Slot:", slot_message)  # Debugging output
 
-        if slot_message.startswith("No current slot found"):
+        if isinstance(slot_message, tuple) or slot_message.startswith("No current slot found") or "Current Slot" not in slot_message:
             error_message = "No slot found for the current time."
+            return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=str(slot_message))
         
-        # Print faculty_id and slot_name for debugging
-        print(f"Looking for Faculty ID: {faculty_id}, Slot: {slot_message}")
-
         # Clean the slot_name string to extract only the actual slot name
-        # This will extract the part before the time range, e.g., "B1+TB1"
-        if "Current Slot" in slot_message:
-            slot_name = slot_message.split(":")[1].split("(")[0].strip()  # Extract the part before '('
-        else:
-            slot_name = slot_message  # Fallback if the format doesn't match
-
+        slot_name = slot_message.split(":")[1].split("(")[0].strip()  # Extract the part before '('
         print(f"Looking for Room for Slot: {slot_name}")
 
         # Fetch the room number based on faculty ID and slot
@@ -207,76 +195,69 @@ def remote_collection():
         # Search for the room assignment for the faculty_id and slot_name
         room_assignment = room_data[(room_data['Faculty ID'] == faculty_id) & (room_data['Slot Name'].str.contains(slot_name))]
 
-        # Debugging output of the room assignment
-        print("Room Assignment Data:", room_assignment)
-
         if room_assignment.empty:
             error_message = "Room not found for this faculty in the current slot."
+            return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=slot_message)
         
         # Extract room number
-        room_number = room_assignment.iloc[0]['Room Number'] if not room_assignment.empty else "N/A"
+        room_number = room_assignment.iloc[0]['Room Number']
         
         # Check if the remote is already issued and not returned
         existing_remote = df[(df["Remote ID"] == remote_id) & (df["Return Status"] == "Not Returned")]
 
         if not existing_remote.empty:
             error_message = f"Remote ID {remote_id} is not returned yet. Please take another remote."
+            return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=slot_message)
+        
+        faculty_info = faculty_df[faculty_df["Faculty ID"].astype(str) == faculty_id]
+
+        if faculty_info.empty:
+            error_message = "Faculty ID not found!"
+            return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=slot_message)
+        
+        faculty_name = faculty_info.iloc[0]["Faculty Name"]
+        mobile_number = faculty_info.iloc[0]["Mobile Number"]
+        school_name = faculty_info.iloc[0]["school"]
+        
+        if school_name in ["ETHENUS", "SIXPHRASE", "FACE"]:
+            success_message = f"Remote ID {remote_id} issued to {faculty_name}!"
         else:
-            faculty_info = faculty_df[faculty_df["Faculty ID"].astype(str) == faculty_id]
+            success_message = f"Remote ID {remote_id} issued to Prof. {faculty_name}!"
 
-            if faculty_info.empty:
-                error_message = "Faculty ID not found!"
-                faculty_name = "Unknown"
-                mobile_number = "Unknown"
-                school_name = "Unknown"
-            else:
-                faculty_name = faculty_info.iloc[0]["Faculty Name"]
-                mobile_number = faculty_info.iloc[0]["Mobile Number"]
-                school_name = faculty_info.iloc[0]["school"]
-                # if not faculty_info.empty else ""
-            if school_name in ["ETHENUS", "SIXPHRASE","FACE"]:
-    # If faculty belongs to specific departments, format the success message without "Prof."
-                success_message = f"Remote ID {remote_id} issued to {faculty_name}!"  # No "Prof." here
-            else:
-             # Default message for other faculties (using Prof.)
-                success_message = f"Remote ID {remote_id} issued to  {faculty_name}!"  # Using "Prof." ADD THE WORD
+        # Log the issue
+        new_entry = {
+            "Faculty Id": faculty_id,
+            "Faculty Name": faculty_name,
+            "School": school_name,
+            "Mobile Number": mobile_number,
+            "Room Number": room_number,
+            "Remote ID": remote_id,
+            "Date of Issue": issue_date,
+            "Time of Issue": issue_time,
+            "Date of Return": "",
+            "Time of Return": "",
+            "Return Status": "Not Returned"
+        }
+        
+        # FIX: Replaced df.append with pd.concat
+        new_row_df = pd.DataFrame([new_entry])
+        df = pd.concat([df, new_row_df], ignore_index=True)
+        df.to_excel("remote_log.xlsx", index=False)
 
-            # Log the issue
-            new_entry = {
-                "Faculty Id": faculty_id,
-                "Faculty Name": faculty_name,
-                "School": school_name,
-                "Mobile Number": mobile_number,
-                "Room Number": room_number,
-                "Remote ID": remote_id,
-                "Date of Issue": issue_date,
-                "Time of Issue": issue_time,
-                "Date of Return": "",
-                "Time of Return": "",
-                "Return Status": "Not Returned"
-                
-                
-            }
-            df = df.append(new_entry, ignore_index=True)
-            df.to_excel("remote_log.xlsx", index=False)
+        faculty_details = {
+            "faculty_id": faculty_id,
+            "faculty_name": faculty_name,
+            "mobile_number": mobile_number,
+            "school_name": school_name,
+            "remote_id": remote_id,
+            "return_status": "Not Returned",
+        }
 
-            faculty_details = {
-                "faculty_id": faculty_id,
-                "faculty_name": faculty_name,
-                "mobile_number": mobile_number,
-                "school_name": school_name,
-                "remote_id": remote_id,
-                "return_status": "Not Returned",
-            }
-            #success_message = f"Remote ID {remote_id} issued to Prof. {faculty_name}!"
-
-        # Reload the remote logs again after the post request and before redirect
+        # Reload the remote logs again after processing the database addition
         remotes = df.tail(10).iloc[::-1].to_dict(orient='records')
         return render_template('remote_collection.html', remotes=remotes, error_message=error_message, faculty_details=faculty_details, success_message=success_message, slot_message=slot_message)
 
     return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=slot_message)
-
-
 
 
 # Route to display faculty details + remote log
@@ -315,27 +296,6 @@ def faculty_details():
         return_status=return_status
     )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # Route for Remote Return
 @app.route('/remote_return', methods=['GET', 'POST'])
 def remote_return():
@@ -361,7 +321,7 @@ def remote_return():
             faculty_name = df.loc[index, "Faculty Name"].iloc[0]
 
             # Success message using flash
-            flash(f"Remote {remote_id} returned by  {faculty_name}!", "success")
+            flash(f"Remote {remote_id} returned by {faculty_name}!", "success")
 
         return redirect(url_for('remote_return'))  # Redirect to show the success message
 
@@ -407,7 +367,7 @@ ISSUE_FOLDER = 'issued_files'
 os.makedirs(ISSUE_FOLDER, exist_ok=True)
 
 @app.route('/stationary', methods=['GET', 'POST'])
-def statinary():
+def stationary():
     success = False
 
     if request.method == 'POST':
@@ -415,7 +375,7 @@ def statinary():
         category = request.form.get('category', '')
         now = datetime.now()
         date = now.strftime("%Y-%m-%d")
-        time = now.strftime("%H:%M:%S")
+        time_str = now.strftime("%H:%M:%S")
 
         # Default values
         faculty_name = 'Unknown'
@@ -427,7 +387,7 @@ def statinary():
             faculty_df.columns = faculty_df.columns.str.strip()  # Clean column names
             print("Available columns:", faculty_df.columns.tolist())
 
-    # Convert Faculty ID column to string for safe comparison
+            # Convert Faculty ID column to string for safe comparison
             faculty_df['Faculty ID'] = faculty_df['Faculty ID'].astype(str)
             emp_id = str(emp_id)  # Ensure form ID is string too
           
@@ -444,7 +404,7 @@ def statinary():
             'Faculty Name': faculty_name,
             'School': school,
             'Date': date,
-            'Time': time
+            'Time': time_str
         }
 
         # Add category-specific fields
@@ -462,6 +422,7 @@ def statinary():
 
         if os.path.exists(file_path):
             df = pd.read_excel(file_path)
+            # FIX: Replaced df.append with pd.concat
             df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
         else:
             df = pd.DataFrame([data])
@@ -472,12 +433,9 @@ def statinary():
     return render_template('stationary.html', success=success)
 
 
-
 # New download route for Excel files
 @app.route('/download/<filename>')
 def download_file(filename):
-    # Optional: Validate the filename to allow only specific files if needed.
-    # For example, you may restrict to known categories:
     allowed_files = [
         "Duster.xlsx",
         "Lab_Fat_Paper.xlsx",
@@ -494,7 +452,6 @@ def download_file(filename):
         abort(404)
 
 
-
 # Main entry point to run the app
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)  # Adjust the port as needed
+    app.run(host='0.0.0.0', port=5000, debug=True)
