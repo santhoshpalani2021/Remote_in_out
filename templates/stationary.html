@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Faculty Item Issue</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script>
+        function handleCategoryChange() {
+            const category = document.getElementById("category").value;
+            document.getElementById("dynamicFields").innerHTML = "";
+
+            if (!category) return;
+
+            if (category === "Xerox") {
+                document.getElementById("dynamicFields").innerHTML = `
+                    <label for="copies">Number of Copies:</label>
+                    <input type="number" id="copies" name="copies" required>
+                    <label for="purpose">Purpose:</label>
+                    <input type="text" id="purpose" name="purpose" required>
+                `;
+            } else if (category === "Marker" || category === "Duster") {
+                document.getElementById("dynamicFields").innerHTML = `
+                    <label for="quantity">Quantity:</label>
+                    <input type="number" id="quantity" name="quantity" required>
+                    
+                `;
+            } else if (category === "Lab Fat Paper") {
+                document.getElementById("dynamicFields").innerHTML = `
+                    <label for="sheets">Number of Sheets:</label>
+                    <input type="number" id="sheets" name="sheets" required>
+                `;
+            } else if (category === "Notes Paper") {
+                document.getElementById("dynamicFields").innerHTML = `
+                    <label for="copies">Number of Copies:</label>
+                    <input type="number" id="copies" name="copies" required>
+                    <label for="purpose">Purpose:</label>
+                    <input type="text" id="purpose" name="purpose" required>
+                `;
+            }
+        }
+
+        // Function to clear the form fields
+        function clearForm() {
+            document.getElementById("emp_id").value = "";
+            document.getElementById("category").selectedIndex = 0;            
+            document.getElementById("dynamicFields").innerHTML = "";
+        }
+
+        // Success message timeout after 5 seconds
+        function showSuccessMessage() {
+            setTimeout(function() {
+                const message = document.getElementById("successMessage");
+                if (message) {
+                    message.style.display = "none";
+                }
+            }, 2000); // 5000 ms = 5 sec
+        }
+
+
+        function toggleDownloadLinks() {
+        var dlLinks = document.getElementById("downloadLinks");
+        // Toggle display: show if hidden, hide if visible
+        if (dlLinks.style.display === "block") {
+            dlLinks.style.display = "none";
+        } else {
+            dlLinks.style.display = "block";
+        }
+    }
+    </script>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo">Register Log Maintaince</a>
+           
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="containerform main-content">
+        <h2 style="text-align: center;">Faculty Item Issue</h2>
+        <br>
+        <br>
+
+        {% if success %}
+        <div id="successMessage" class="success-message">
+            ✅ Issued Successfully!
+        </div>
+        <script>
+            showSuccessMessage();  // Hide message after 5 seconds
+            clearForm();          // Clear form fields after submission
+        </script>
+        {% endif %}
+
+        <form method="POST">
+            <label for="emp_id">Faculty Id</label>
+            <br>
+            <input type="text" id="emp_id" name="emp_id" required>
+            
+            <br>
+            <br>
+            
+
+            <label for="category">Register's Category</label>
+            <br>
+            <select id="category" name="category" onchange="handleCategoryChange()" style="font-weight: bold;" autocomplete="off">
+                <option style="font-weight: bold;" value="" selected>-- Select Category --</option>
+                <option style="font-weight: bold;" value="Xerox">Xerox</option>
+                <option style="font-weight: bold;" value="Marker">Marker</option>
+                <option style="font-weight: bold;" value="Duster">Duster</option>
+                <option style="font-weight: bold;" value="Lab Fat Paper">Lab FAT Paper</option>
+                <option style="font-weight: bold;" value="Notes Paper">Notes Paper</option>
+            </select>
+            
+
+            <div id="dynamicFields" class="dynamic-fields"></div>
+            <br>
+            
+
+            <div class="submit-button" style="margin-top: 15px;">
+                <button type="submit" >Submit</button>
+                
+            </div>
+            <a class="link" style="margin-left: 80%; margin-top: 60%;" href="/"><b>Back to Home</b></a> 
+        </form>
+    </div>
+
+    <!-- Common Download Button -->
+    <div class="download-container">
+        <button id="downloadBtn" onclick="toggleDownloadLinks()">Download Files</button>
+    </div>
+    
+
+<!-- Download Links Panel (initially hidden) -->
+<div class="download-links" id="downloadLinks">
+    <a href="{{ url_for('download_file', filename='Xerox.xlsx') }}">Download Xerox Excel</a>
+    <a href="{{ url_for('download_file', filename='Marker.xlsx') }}">Download Marker Excel</a>
+    <a href="{{ url_for('download_file', filename='Duster.xlsx') }}">Download Duster Excel</a>
+    <a href="{{ url_for('download_file', filename='Lab_Fat_Paper.xlsx') }}">Download Lab Fat Paper Excel</a>
+    <a href="{{ url_for('download_file', filename='Notes_Paper.xlsx') }}">Download Notes Paper Excel</a>
+</div>
+
+
+
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>Developed by Scope</p>
+        </div>
+    </footer>
+</body>
+</html>
