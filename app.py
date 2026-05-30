@@ -7,26 +7,23 @@ import secrets
 from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(16)  # Or use your own secret key
+app.secret_key = secrets.token_hex(16)  # Unique runtime secret key
 
 # Load the remote log (or create an empty one)
 def load_remote_log():
     try:
         df = pd.read_excel("remote_log.xlsx")
-        # Ensure column names are consistent
         expected_columns = ["Faculty Id", "Faculty Name", "School", "Mobile Number", 
                             "Room Number", "Remote ID", "Date of Issue", "Time of Issue", 
                             "Date of Return", "Time of Return", "Return Status"]
-        df.columns = [col.strip() for col in df.columns]  # Strip any leading/trailing spaces
-        return df[expected_columns]  # Ensure we load only the expected columns
+        df.columns = [col.strip() for col in df.columns]  # Strip leading/trailing spaces
+        return df[expected_columns]
     except FileNotFoundError:
-        # If the file doesn't exist, create it with the correct columns
         df = pd.DataFrame(columns=["Faculty Id", "Faculty Name", "School", "Mobile Number", 
                                    "Room Number", "Remote ID", "Date of Issue", "Time of Issue", 
                                    "Date of Return", "Time of Return", "Return Status"])
         df.to_excel("remote_log.xlsx", index=False)
         return df
-
 
 # Load faculty data (or create an empty one)
 def load_faculty_data():
@@ -35,13 +32,13 @@ def load_faculty_data():
     except FileNotFoundError:
         df = pd.DataFrame(columns=["Faculty ID", "Faculty Name", "Mobile Number", "school"])
         df.to_excel("faculty_data.xlsx", index=False)
-    df.columns = df.columns.str.strip()  # Strip any leading/trailing spaces from columns
+    df.columns = df.columns.str.strip()
     return df
 
 # Load Slot Data (contains slot times and names)
 def load_slot_data():
     try:
-        df = pd.read_excel("slot_data.xlsx")  # Slot allocation data
+        df = pd.read_excel("slot_data.xlsx")
     except FileNotFoundError:
         df = pd.DataFrame(columns=["Slot Name", "Slot Time"])
         df.to_excel("slot_data.xlsx", index=False)
@@ -50,7 +47,7 @@ def load_slot_data():
 # Load Room Data (contains room numbers, faculty IDs, slot names)
 def load_room_data():
     try:
-        df = pd.read_excel("room_data.xlsx")  # Room allocation data
+        df = pd.read_excel("room_data.xlsx")
     except FileNotFoundError:
         df = pd.DataFrame(columns=["Faculty ID", "Faculty Name", "Room Number", "Slot Name"])
         df.to_excel("room_data.xlsx", index=False)
@@ -59,21 +56,17 @@ def load_room_data():
 # Load Day Order Data (contains days of the week, slot names, and hours)
 def load_day_order_data():
     try:
-        df = pd.read_excel("day_order.xlsx")  # Day wise order data (Monday to Friday)
+        df = pd.read_excel("day_order.xlsx")
     except FileNotFoundError:
         df = pd.DataFrame(columns=["Day", "Slot Name", "Start Time", "End Time"])
         df.to_excel("day_order.xlsx", index=False)
     return df
 
 def load_excel_data():
-    # Load the slot data
     slot_data = pd.read_excel('slot_data.xlsx')
-    # Load the day order data
     day_order = pd.read_excel('day_order.xlsx')
-    # Load the room data
     room_data = pd.read_excel('room_data.xlsx')
     return slot_data, day_order, room_data
-
 
 # Function to read the timetable from an Excel file and return the DataFrame
 def read_schedule_from_excel(excel_file_path):
@@ -91,57 +84,64 @@ def determine_current_slot(df):
         return "Failed to load timetable from Excel.", 400
 
     current_time = datetime.now()
-    current_day = current_time.strftime('%A')  # Get the day of the week (e.g., Monday)
-    current_hour = current_time.hour + current_time.minute / 60  # Include minutes for accurate comparison
+    current_day = current_time.strftime('%A')  # e.g., "Saturday"
     
-    print(f"Checking for Day: {current_day}, Time: {current_hour:.2f}")  # Debugging output
+    # ─── WEEKEND TESTING OVERRIDE ───
+    if current_day in ["Saturday", "Sunday"]:
+        print(f"Weekend detected ({current_day}). Overriding to Friday for slot calculations.")
+        current_day = "Friday"  
+    
+    current_hour = current_time.hour + current_time.minute / 60
+    print(f"Checking schedule layout for Day: {current_day}, Current Time Decimal: {current_hour:.2f}")
 
-    # Ensure the current_day exists as a column in the DataFrame
+    # Clean space discrepancies from columns
+    df.columns = df.columns.str.strip()
+
     if current_day not in df.columns:
-        return f"Day '{current_day}' not found in the schedule data.", 400
+        return f"Day '{current_day}' not found in the schedule columns.", 400
 
-    # Extract the time slots and corresponding names for today
-    slots = df['Time Slot'].dropna().reset_index(drop=True)  # Time slots (e.g., '7.50-8.50')
-    slot_names_for_day = df[current_day].dropna().reset_index(drop=True)  # Slot names for the day
+    slots = df['Time Slot'].dropna().reset_index(drop=True)
+    slot_names_for_day = df[current_day].dropna().reset_index(drop=True)
 
-    # Debugging: Print slot data for the day
-    print(f"Slots for {current_day}: {slots}")
-    print(f"Slot names for {current_day}: {slot_names_for_day}")
-
-    # Find the matching slot based on the current time
     for index, slot in enumerate(slots):
         try:
-            # Split start and end time and handle edge cases like crossing midnight
-            start_time, end_time = slot.split('-')
-            start_hour, start_minute = map(float, start_time.split('.'))
-            end_hour, end_minute = map(float, end_time.split('.'))
+            slot_str = str(slot).strip()
+            if '-' not in slot_str:
+                continue
+                
+            start_time, end_time = slot_str.split('-')
             
-            # If the end time is less than the start time, assume it spans midnight
-            if end_hour < start_hour:
-                end_hour += 24  # Adding 24 hours to the end time
+            # Helper logic to accurately parse trailing zeros in float values (e.g., 9.3 vs 9.30)
+            def parse_time_to_decimal(time_val_str):
+                parts = time_val_str.strip().split('.')
+                hours = float(parts[0])
+                minutes_string = parts[1] if len(parts) > 1 else "0"
+                if len(minutes_string) == 1 and minutes_string != "0":
+                    minutes_string += "0"  # Corrects "3" back into "30"
+                minutes = float(minutes_string)
+                return hours + (minutes / 60.0)
 
-            # Convert times into decimal hours (e.g., 12:30 becomes 12.5)
-            start_time_decimal = start_hour + start_minute / 60
-            end_time_decimal = end_hour + end_minute / 60
+            start_time_decimal = parse_time_to_decimal(start_time)
+            end_time_decimal = parse_time_to_decimal(end_time)
 
-            print(f"Slot {index + 1}: {start_time}-{end_time} (Start: {start_time_decimal}, End: {end_time_decimal})")
+            if end_time_decimal < start_time_decimal:
+                end_time_decimal += 24  # Wrap around midnight boundary condition
 
-            # Check if the current time is between the start and end time
+            print(f"Checking Slot Match [{index + 1}]: {start_time_decimal:.2f} <= {current_hour:.2f} < {end_time_decimal:.2f}")
+
             if start_time_decimal <= current_hour < end_time_decimal:
                 slot_name = slot_names_for_day[index]
                 return f"Current Slot: {slot_name} ({slot})"
-        except ValueError as ve:
-            print(f"Error parsing time slot '{slot}': {ve}")
-            continue  # Skip invalid time slots
+        except Exception as e:
+            print(f"Error processing matching matrix for token '{slot}': {e}")
+            continue
     
     return "No current slot found", 404
 
 # Function to get the room assignment for a given faculty and slot
 def get_room_for_faculty(faculty_id, slot_name, room_data):
-    # Filter room data based on Faculty ID and Slot Name
     filtered_data = room_data[room_data['Faculty ID'] == faculty_id]
     for slot in filtered_data['Slot Name']:
-        # Split slot names by "+" to handle multiple slots
         slots = slot.split('+')
         if slot_name in slots:
             return filtered_data[filtered_data['Slot Name'] == slot].iloc[0]['Room Number']
@@ -151,9 +151,8 @@ def get_room_for_faculty(faculty_id, slot_name, room_data):
 @app.route('/')
 def index():
     df = load_remote_log()
-    remotes = df.iloc[::-1].to_dict(orient='records')  # Convert DataFrame to a list of dicts
+    remotes = df.iloc[::-1].to_dict(orient='records')  
     return render_template('index.html', remotes=remotes)
-
 
 @app.route('/remote_collection', methods=['GET', 'POST'])
 def remote_collection():
@@ -161,10 +160,10 @@ def remote_collection():
     faculty_df = load_faculty_data()
 
     remotes = df.tail(10).iloc[::-1].to_dict(orient='records')
-    faculty_details = None  # Initialize faculty details
-    success_message = ""  # Initialize success message
+    faculty_details = None  
+    success_message = ""  
     error_message = None
-    slot_message = None  # Add a variable for slot information
+    slot_message = None  
 
     if request.method == 'POST':
         faculty_id = request.form['faculty_id']
@@ -173,36 +172,33 @@ def remote_collection():
         issue_date = time.strftime("%Y-%m-%d")
         slot_data, day_order, room_data = load_excel_data()
 
-        # Strip spaces from column names in room_data
-        room_data.columns = room_data.columns.str.strip()  # Ensure no extra spaces
+        room_data.columns = room_data.columns.str.strip() 
 
-        # Determine the current slot
+        # Evaluate current time slot bounds
         slot_message = determine_current_slot(day_order)
-        print("Determined Slot:", slot_message)  # Debugging output
+        print("System Evaluated Slot Status:", slot_message)  
 
         if isinstance(slot_message, tuple) or slot_message.startswith("No current slot found") or "Current Slot" not in slot_message:
             error_message = "No slot found for the current time."
             return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=str(slot_message))
         
-        # Clean the slot_name string to extract only the actual slot name
-        slot_name = slot_message.split(":")[1].split("(")[0].strip()  # Extract the part before '('
-        print(f"Looking for Room for Slot: {slot_name}")
+        # Isolate the exact slot token string (e.g., "B1+TB1")
+        slot_name = slot_message.split(":")[1].split("(")[0].strip()  
+        print(f"Querying allocation indexes for Room Slot: {slot_name}")
 
-        # Fetch the room number based on faculty ID and slot
-        faculty_id = str(faculty_id)  # Ensure it's a string
-        room_data['Faculty ID'] = room_data['Faculty ID'].astype(str)  # Convert column to string
+        faculty_id = str(faculty_id)  
+        room_data['Faculty ID'] = room_data['Faculty ID'].astype(str)  
 
-        # Search for the room assignment for the faculty_id and slot_name
+        # Query room assignment matching Faculty ID and active Slot Name string boundary
         room_assignment = room_data[(room_data['Faculty ID'] == faculty_id) & (room_data['Slot Name'].str.contains(slot_name))]
 
         if room_assignment.empty:
             error_message = "Room not found for this faculty in the current slot."
             return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=slot_message)
         
-        # Extract room number
         room_number = room_assignment.iloc[0]['Room Number']
         
-        # Check if the remote is already issued and not returned
+        # Verify if token is checked out
         existing_remote = df[(df["Remote ID"] == remote_id) & (df["Return Status"] == "Not Returned")]
 
         if not existing_remote.empty:
@@ -224,7 +220,7 @@ def remote_collection():
         else:
             success_message = f"Remote ID {remote_id} issued to Prof. {faculty_name}!"
 
-        # Log the issue
+        # Create active issue transaction entry dictionary
         new_entry = {
             "Faculty Id": faculty_id,
             "Faculty Name": faculty_name,
@@ -239,7 +235,7 @@ def remote_collection():
             "Return Status": "Not Returned"
         }
         
-        # FIX: Replaced df.append with pd.concat
+        # Concatenate record safely into tracking frame without deprecated append method
         new_row_df = pd.DataFrame([new_entry])
         df = pd.concat([df, new_row_df], ignore_index=True)
         df.to_excel("remote_log.xlsx", index=False)
@@ -253,7 +249,6 @@ def remote_collection():
             "return_status": "Not Returned",
         }
 
-        # Reload the remote logs again after processing the database addition
         remotes = df.tail(10).iloc[::-1].to_dict(orient='records')
         return render_template('remote_collection.html', remotes=remotes, error_message=error_message, faculty_details=faculty_details, success_message=success_message, slot_message=slot_message)
 
@@ -268,7 +263,6 @@ def faculty_details():
     faculty_df = load_faculty_data()
     remote_df = load_remote_log()
 
-    # Fetch faculty details
     faculty_info = faculty_df[faculty_df["Faculty ID"].astype(str) == faculty_id]
     
     if faculty_info.empty:
@@ -278,7 +272,6 @@ def faculty_details():
     mobile_number = faculty_info.iloc[0]["Mobile Number"]
     school_name = faculty_info.iloc[0]["school"]
 
-    # Fetch Remote ID and Status
     remote_info = remote_df[remote_df["Faculty ID"].astype(str) == faculty_id]
     if not remote_info.empty:
         remote_id = remote_info.iloc[0]["Remote ID"]
@@ -300,14 +293,11 @@ def faculty_details():
 @app.route('/remote_return', methods=['GET', 'POST'])
 def remote_return():
     df = load_remote_log()
-
-    # Only include remotes that are "Not Returned"
     remotes = df[df["Return Status"] == "Not Returned"].tail(10).iloc[::-1].to_dict(orient='records')
 
     if request.method == 'POST':
         remote_id = request.form['remote_id']
         
-        # Log the return
         index = df[(df["Remote ID"] == remote_id) & (df["Return Status"] == "Not Returned")].index
         if not index.empty:
             return_time = time.strftime("%H:%M:%S")
@@ -317,13 +307,10 @@ def remote_return():
             df.loc[index, "Time of Return"] = return_time
             df.to_excel("remote_log.xlsx", index=False)
 
-            # Get the Faculty Name
             faculty_name = df.loc[index, "Faculty Name"].iloc[0]
-
-            # Success message using flash
             flash(f"Remote {remote_id} returned by {faculty_name}!", "success")
 
-        return redirect(url_for('remote_return'))  # Redirect to show the success message
+        return redirect(url_for('remote_return'))  
 
     return render_template('remote_return.html', remotes=remotes)
 
@@ -335,23 +322,17 @@ def download_excel():
         start_datetime_str = request.form['start_datetime']
         end_datetime_str = request.form['end_datetime']
 
-        # Convert the string datetime to pandas datetime format for form inputs
         start_datetime = pd.to_datetime(start_datetime_str, format="%d-%m-%Y %H:%M")
         end_datetime = pd.to_datetime(end_datetime_str, format="%d-%m-%Y %H:%M")
 
         df = load_remote_log()
-
-        # Combine 'Date of Issue' and 'Time of Issue' columns into a single datetime column
         df['datetime'] = pd.to_datetime(df['Date of Issue'] + ' ' + df['Time of Issue'], format="%Y-%m-%d %H:%M:%S")
 
-        # Filter the DataFrame based on the specified datetime range
         df_filtered = df[(df['datetime'] >= start_datetime) & (df['datetime'] <= end_datetime)]
 
-        # Check if the filtered DataFrame is empty
         if df_filtered.empty:
             return "No data found for the specified range."
 
-        # Create a new Excel file in memory
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_filtered.to_excel(writer, index=False)
@@ -377,28 +358,23 @@ def stationary():
         date = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H:%M:%S")
 
-        # Default values
         faculty_name = 'Unknown'
         school = 'Unknown'
 
-        # Load and clean faculty data
         try:
             faculty_df = pd.read_excel(FACULTY_DATA_PATH)
-            faculty_df.columns = faculty_df.columns.str.strip()  # Clean column names
-            print("Available columns:", faculty_df.columns.tolist())
-
-            # Convert Faculty ID column to string for safe comparison
+            faculty_df.columns = faculty_df.columns.str.strip()
+            
             faculty_df['Faculty ID'] = faculty_df['Faculty ID'].astype(str)
-            emp_id = str(emp_id)  # Ensure form ID is string too
+            emp_id = str(emp_id)  
           
             match = faculty_df.loc[faculty_df['Faculty ID'] == emp_id]
             if not match.empty:
                 faculty_name = match.iloc[0]['Faculty Name']
                 school = match.iloc[0]['school']
         except Exception as e:
-            print("Error reading faculty data:", e)
+            print("Error reading faculty data structure matrix:", e)
 
-        # Prepare data to store
         data = {
             'Faculty ID': emp_id,
             'Faculty Name': faculty_name,
@@ -407,7 +383,6 @@ def stationary():
             'Time': time_str
         }
 
-        # Add category-specific fields
         if category in ['Xerox', 'Notes Paper']:
             data['Number of Copies'] = request.form.get('copies', '')
             data['Purpose'] = request.form.get('purpose', '')
@@ -416,13 +391,11 @@ def stationary():
         elif category == 'Lab Fat Paper':
             data['Number of Sheets'] = request.form.get('sheets', '')
 
-        # Save to Excel
         filename = f"{category.replace(' ', '_')}.xlsx"
         file_path = os.path.join(ISSUE_FOLDER, filename)
 
         if os.path.exists(file_path):
             df = pd.read_excel(file_path)
-            # FIX: Replaced df.append with pd.concat
             df = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
         else:
             df = pd.DataFrame([data])
@@ -446,12 +419,10 @@ def download_file(filename):
     if filename not in allowed_files:
         abort(404)
     try:
-        # Serve the file from the issued_files directory
         return send_from_directory(ISSUE_FOLDER, filename, as_attachment=True)
     except Exception as e:
         abort(404)
 
 
-# Main entry point to run the app
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
