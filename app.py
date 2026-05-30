@@ -19,7 +19,6 @@ def load_remote_log():
         df.columns = [col.strip() for col in df.columns]
         return df[expected_columns]
     except Exception:
-        # Automatically creates the file with headers if missing
         df = pd.DataFrame(columns=["Faculty Id", "Faculty Name", "School", "Mobile Number", 
                                    "Room Number", "Remote ID", "Date of Issue", "Time of Issue", 
                                    "Date of Return", "Time of Return", "Return Status"])
@@ -36,40 +35,37 @@ def load_faculty_data():
     return df
 
 def load_excel_data():
-    try:
-        slot_data = pd.read_excel('slot_data.xlsx')
-    except Exception:
-        slot_data = pd.DataFrame(columns=["Slot Name", "Slot Time"])
-    try:
-        day_order = pd.read_excel('day_order.xlsx')
-    except Exception:
-        day_order = pd.DataFrame(columns=["Time Slot", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
-    try:
-        room_data = pd.read_excel('room_data.xlsx')
-    except Exception:
-        room_data = pd.DataFrame(columns=["Faculty ID", "Faculty Name", "Room Number", "Slot Name"])
+    try: slot_data = pd.read_excel('slot_data.xlsx')
+    except Exception: slot_data = pd.DataFrame(columns=["Slot Name", "Slot Time"])
+    try: day_order = pd.read_excel('day_order.xlsx')
+    except Exception: day_order = pd.DataFrame(columns=["Time Slot", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+    try: room_data = pd.read_excel('room_data.xlsx')
+    except Exception: room_data = pd.DataFrame(columns=["Faculty ID", "Faculty Name", "Room Number", "Slot Name"])
         
     return slot_data, day_order, room_data
 
+# FIX: ROBUST TIMETABLE PARSER USING TRUE CLOCK STRINGS
 def determine_current_slot(df):
     if df is None or df.empty:
         return "No Schedule Available"
 
-    current_time = datetime.now()
-    current_day = current_time.strftime('%A')
+    now = datetime.now()
+    current_day = now.strftime('%A')  # Captures "Saturday", "Sunday", etc.
+    current_time_str = now.strftime("%H:%M")
     
-    # Force Weekend Override to Friday for testing
-    if current_day in ["Saturday", "Sunday"]:
-        current_day = "Friday"  
-    
-    current_hour = current_time.hour + current_time.minute / 60
     df.columns = df.columns.str.strip()
 
     if current_day not in df.columns:
-        return "Day column missing"
+        return f"Day column '{current_day}' missing"
 
     slots = df['Time Slot'].dropna().reset_index(drop=True)
     slot_names_for_day = df[current_day].dropna().reset_index(drop=True)
+
+    # Convert a string like "7.30" or "14.30" directly to a clean datetime time object
+    def clean_time_obj(t_str):
+        t_str = t_str.strip().replace(':', '.')
+        hours, minutes = map(int, t_str.split('.'))
+        return now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
 
     for index, slot in enumerate(slots):
         try:
@@ -77,26 +73,18 @@ def determine_current_slot(df):
             if '-' not in slot_str:
                 continue
                 
-            start_time, end_time = slot_str.split('-')
-            
-            def parse_time_to_decimal(time_val_str):
-                parts = time_val_str.strip().split('.')
-                hours = float(parts[0])
-                minutes_string = parts[1] if len(parts) > 1 else "0"
-                if len(minutes_string) == 1 and minutes_string != "0":
-                    minutes_string += "0"
-                return hours + (float(minutes_string) / 60.0)
+            start_str, end_str = slot_str.split('-')
+            start_time = clean_time_obj(start_str)
+            end_time = clean_time_obj(end_str)
 
-            start_time_decimal = parse_time_to_decimal(start_time)
-            end_time_decimal = parse_time_to_decimal(end_time)
+            # If testing a slot gap like 8.30 vs 8.31, pad the boundary by 1 minute
+            start_time = start_time.replace(minute=max(0, start_time.minute - 1))
 
-            if end_time_decimal < start_time_decimal:
-                end_time_decimal += 24
-
-            if start_time_decimal <= current_hour < end_time_decimal:
+            if start_time <= now <= end_time:
                 if index < len(slot_names_for_day):
                     return f"Current Slot: {slot_names_for_day[index]} ({slot})"
-        except Exception:
+        except Exception as e:
+            print(f"Error parsing slot matrix row: {e}")
             continue
     
     return "No current slot found"
@@ -116,8 +104,8 @@ def remote_collection():
     error_message = None
     success_message = ""
     faculty_details = None
+    slot_message = "N/A"
 
-    # Step 1: Default fallbacks so the app NEVER breaks
     slot_name = "N/A"
     room_number = "N/A"
     faculty_name = "Unknown Faculty"
@@ -133,38 +121,37 @@ def remote_collection():
         _, day_order, room_data = load_excel_data()
         room_data.columns = room_data.columns.str.strip() 
 
-        # Step 2: Try to find the slot
+        # Evaluate live schedule window
         slot_message = determine_current_slot(day_order)
         
         if "Current Slot:" in slot_message:
             slot_name = slot_message.split(":")[1].split("(")[0].strip()
         
-        # Step 3: Try to find Room assignment, fallback to N/A instead of crashing
+        # Match Room Allocations from user input files
         if slot_name.upper() not in ["NIL", "FREE", "EMPTY", "N/A", ""]:
             room_data['Faculty ID'] = room_data['Faculty ID'].astype(str).str.strip()
             room_assignment = room_data[(room_data['Faculty ID'] == faculty_id) & (room_data['Slot Name'].str.contains(slot_name))]
             if not room_assignment.empty:
                 room_number = room_assignment.iloc[0]['Room Number']
             else:
-                # Fallback warning but DOES NOT STOP execution
-                error_message = f"Warning: Room not allocated for slot '{slot_name}'. Logged as N/A."
+                error_message = f"Notice: Room allocation matching slot '{slot_name}' wasn't found in system registers. Logged as N/A."
         else:
             error_message = f"Notice: No active timetable slots right now (Slot is {slot_name}). Logged as N/A."
 
-        # Step 4: Validate Faculty existence
+        # Fetch Faculty details
         faculty_info = faculty_df[faculty_df["Faculty ID"].astype(str).str.strip() == faculty_id]
         if not faculty_info.empty:
-            faculty_name = faculty_info.iloc[0]["Faculty Name"]
+            faculty_name = str(faculty_info.iloc[0]["Faculty Name"]).strip()
             mobile_number = faculty_info.iloc[0]["Mobile Number"]
-            school_name = faculty_info.iloc[0]["school"]
+            school_name = str(faculty_info.iloc[0]["school"]).strip()
 
-        # Step 5: Check if remote is already out
+        # Check checkout log safety constraints
         existing_remote = df[(df["Remote ID"] == remote_id) & (df["Return Status"] == "Not Returned")]
         if not existing_remote.empty:
             error_message = f"Error: Remote ID {remote_id} is already issued and not returned!"
-            return render_template('remote_collection.html', remotes=remotes, error_message=error_message)
+            return render_template('remote_collection.html', remotes=remotes, error_message=error_message, slot_message=slot_message)
 
-        # Step 6: FORCE SAVE EVERYTHING TO EXCEL REGARDLESS OF WARNINGS
+        # Log entry assembly
         new_entry = {
             "Faculty Id": faculty_id,
             "Faculty Name": faculty_name,
@@ -183,27 +170,28 @@ def remote_collection():
         df = pd.concat([df, new_row_df], ignore_index=True)
         df.to_excel("remote_log.xlsx", index=False)
 
-        if school_name in ["ETHENUS", "SIXPHRASE", "FACE"]:
-            success_message = f"Remote ID {remote_id} issued to {faculty_name}!"
+        # FIX: FIXES DOUBLE PREFIX ERROR
+        # Clean potential duplicate prefixes already saved in source Excel strings
+        clean_name = faculty_name.replace("Prof.", "").replace("Prof", "").strip()
+        if school_name.upper() in ["ETHENUS", "SIXPHRASE", "FACE"]:
+            success_message = f"Remote ID {remote_id} issued to {clean_name}!"
         else:
-            success_message = f"Remote ID {remote_id} issued to Prof. {faculty_name}!"
+            success_message = f"Remote ID {remote_id} issued to Prof. {clean_name}!"
 
         faculty_details = {
             "faculty_id": faculty_id,
-            "faculty_name": faculty_name,
+            "faculty_name": f"Prof. {clean_name}" if school_name.upper() not in ["ETHENUS", "SIXPHRASE", "FACE"] else clean_name,
             "mobile_number": mobile_number,
             "school_name": school_name,
             "remote_id": remote_id,
             "return_status": "Not Returned",
         }
 
-        # Refresh log list
         remotes = df.tail(10).iloc[::-1].to_dict(orient='records')
         return render_template('remote_collection.html', remotes=remotes, error_message=error_message, faculty_details=faculty_details, success_message=success_message, slot_message=slot_message)
 
-    return render_template('remote_collection.html', remotes=remotes, error_message=error_message)
+    return render_template('remote_collection.html', remotes=remotes, error_message=error_message, slot_message=slot_message)
 
-# Route for Remote Return
 @app.route('/remote_return', methods=['GET', 'POST'])
 def remote_return():
     df = load_remote_log()
@@ -222,7 +210,6 @@ def remote_return():
 
     return render_template('remote_return.html', remotes=remotes)
 
-# Route to stationary tracker
 @app.route('/stationary', methods=['GET', 'POST'])
 def stationary():
     success = False
@@ -254,6 +241,6 @@ def stationary():
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print(f"👉 REAL-TIME DATA IS SAVING INSIDE THIS FOLDER:\n🎯 {os.getcwd()}")
+    print(f"👉 DATA SAVED IN THE ACTIVE FOLDER:\n🎯 {os.getcwd()}")
     print("="*60 + "\n")
     app.run(host='0.0.0.0', port=5000, debug=True)
