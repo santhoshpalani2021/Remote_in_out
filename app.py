@@ -182,9 +182,14 @@ def remote_collection():
             error_message = "No slot found for the current time."
             return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=str(slot_message))
         
-        # Isolate the exact slot token string (e.g., "B1+TB1")
+        # Isolate the exact slot token string (e.g., "B1+TB1" or "NIL")
         slot_name = slot_message.split(":")[1].split("(")[0].strip()  
         print(f"Querying allocation indexes for Room Slot: {slot_name}")
+
+        # ─── EXTRA FIX: DETECT 'NIL' OR 'FREE' TIMETABLE BLOCKS IMMEDIATELY ───
+        if slot_name.upper() in ["NIL", "FREE", "EMPTY", ""]:
+            error_message = f"There are no classes scheduled right now (Slot is {slot_name})."
+            return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=slot_message)
 
         faculty_id = str(faculty_id)  
         room_data['Faculty ID'] = room_data['Faculty ID'].astype(str)  
@@ -193,7 +198,7 @@ def remote_collection():
         room_assignment = room_data[(room_data['Faculty ID'] == faculty_id) & (room_data['Slot Name'].str.contains(slot_name))]
 
         if room_assignment.empty:
-            error_message = "Room not found for this faculty in the current slot."
+            error_message = f"Room not found for Faculty ID {faculty_id} in slot '{slot_name}'."
             return render_template('remote_collection.html', remotes=remotes, error_message=error_message, success_message=success_message, slot_message=slot_message)
         
         room_number = room_assignment.iloc[0]['Room Number']
@@ -235,7 +240,7 @@ def remote_collection():
             "Return Status": "Not Returned"
         }
         
-        # Concatenate record safely into tracking frame without deprecated append method
+        # Fix: Appends safe concatenation using pd.concat
         new_row_df = pd.DataFrame([new_entry])
         df = pd.concat([df, new_row_df], ignore_index=True)
         df.to_excel("remote_log.xlsx", index=False)
